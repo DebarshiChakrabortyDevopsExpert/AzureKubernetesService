@@ -1,0 +1,25 @@
+parameters:
+- name: imageRepository
+  default: ''
+- name: dockerfilePath
+  default: ''
+- name: dockerRegistryServiceConnection
+  default: ''
+- name: buildname
+  default: ''
+
+
+jobs:  
+- job: Build
+  displayName: ${{ parameters.buildname }}
+  steps:
+  - task: Docker@2
+    displayName: Build and push an image to container registry
+    inputs:
+      command: buildAndPush
+      repository: ${{ parameters.imageRepository }}
+      dockerfile: ${{ parameters.dockerfilePath }}
+      containerRegistry: ${{ parameters.dockerRegistryServiceConnection }}
+      tags: |
+        $(Build.BuildNumber)
+

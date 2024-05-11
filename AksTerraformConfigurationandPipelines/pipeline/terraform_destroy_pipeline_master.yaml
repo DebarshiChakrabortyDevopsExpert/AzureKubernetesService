@@ -1,0 +1,172 @@
+trigger:
+- none
+
+# Pipeline parameters defined
+
+parameters:
+- name: backendServiceArm
+  displayName: Service Connection
+  type: string
+  default: svc-connection
+  values:
+  - svc-connection
+
+- name: subscription
+  displayName: Select Subscription
+  type: string
+  default: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  values:
+  - xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+- name: environment
+  displayName: Environment
+  type: string
+  default: dev
+  values:
+  - dev
+  - test
+  - prod 
+
+- name: folder
+  displayName: folder
+  type: string
+  default: azurekuberneteslandingzone
+  values:
+  - azurekuberneteslandingzone
+  - aksjumpbox
+  - azurekubernetesprivate
+  - azurekubernetespublic
+  - azurecontaineregistry
+  - azurekubernetesloadbalancer
+
+- name: backendAzureRmResourceGroupName
+  displayName: Backend Storage Account Resoure Group
+  type: string
+  default: rg-dv-tfstate-eus2
+  values:
+  - rg-dv-tfstate-eus2
+
+- name: backendAzureRmStorageAccountName
+  displayName: Backend Storage Account Name
+  type: string
+  default: satfdvnpdeus2
+  values:
+  - satfdvnpdeus2
+
+- name: backendAzureRmContainerName
+  displayName: Backend Storage Account Container Name
+  type: string
+  default: tfstate
+  values:
+  - tfstate
+  - tfstatetest
+
+- name: agentpoolname
+  displayName: Agent Pool Name
+  type: string
+  default: ubuntu-latest
+  values:
+  - ubuntu-latest
+  
+# This stage will run terraform init and plan (Not Terraform apply)
+stages :
+  - stage: plan      
+
+    jobs: 
+
+    - job: plan
+
+      displayName: Terraform Plan
+
+      pool:
+        vmImage: ${{ parameters.agentpoolname }}
+
+      continueOnError: false      
+
+      steps:
+
+      - checkout: self
+
+      - task: TerraformCLI@0
+        displayName: 'Terraform init'
+        inputs:
+          command: 'init'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/env/${{ parameters.environment }}/${{ parameters.folder }}'
+          backendType: 'azurerm'
+          backendServiceArm: '${{ parameters.backendServiceArm }}'
+          backendAzureRmSubscriptionId: '${{ parameters.subscription }}'
+          backendAzureRmResourceGroupName: '${{ parameters.backendAzureRmResourceGroupName }}'
+          backendAzureRmStorageAccountName: '${{ parameters.backendAzureRmStorageAccountName }}'
+          backendAzureRmContainerName: '${{ parameters.backendAzureRmContainerName }}'
+          backendAzureRmKey: '${{ parameters.folder }}.tfstate'
+          allowTelemetryCollection: true
+
+      - task: TerraformCLI@0
+        displayName: 'Terraform plan'
+        inputs:
+          command: 'plan'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/env/${{ parameters.environment }}/${{ parameters.folder }}'
+          environmentServiceName: '${{ parameters.backendServiceArm }}'
+          providerAzureRmSubscriptionId: '${{ parameters.subscription }}'
+          allowTelemetryCollection: true
+
+  # This stage will run terraform init, plan and apply
+  # This stage will trigger if the previous stage has run successfully, and post admin approval in DevOps portal.
+
+  - stage: apply
+
+    dependsOn: [plan]
+
+    condition: succeeded('plan')    
+
+    jobs: 
+
+    - deployment: apply
+
+      displayName: Terraform Apply
+
+      pool:
+        vmImage: ${{ parameters.agentpoolname }}
+
+      continueOnError: false
+
+      environment: ${{ parameters.environment }}
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+
+            - checkout: self
+
+            - task: TerraformCLI@0
+              displayName: 'Terraform init'
+              inputs:
+                command: 'init'
+                workingDirectory: '$(System.DefaultWorkingDirectory)/env/${{ parameters.environment }}/${{ parameters.folder }}'
+                backendType: 'azurerm'
+                backendServiceArm: '${{ parameters.backendServiceArm }}'
+                backendAzureRmSubscriptionId: '${{ parameters.subscription }}'
+                backendAzureRmResourceGroupName: '${{ parameters.backendAzureRmResourceGroupName }}'
+                backendAzureRmStorageAccountName: '${{ parameters.backendAzureRmStorageAccountName }}'
+                backendAzureRmContainerName: '${{ parameters.backendAzureRmContainerName }}'
+                backendAzureRmKey: '${{ parameters.folder }}.tfstate'
+                allowTelemetryCollection: true
+
+            - task: TerraformCLI@0
+              displayName: 'Terraform plan'
+              inputs:
+                command: 'plan'
+                workingDirectory: '$(System.DefaultWorkingDirectory)/env/${{ parameters.environment }}/${{ parameters.folder }}'
+                environmentServiceName: '${{ parameters.backendServiceArm }}'
+                providerAzureRmSubscriptionId: '${{ parameters.subscription }}'
+                allowTelemetryCollection: true
+
+            - task: TerraformCLI@0
+              displayName: 'Terraform Destroy'
+              inputs:
+                command: 'destroy'
+                commandoptions: '-auto-approve'
+                workingDirectory: '$(System.DefaultWorkingDirectory)/env/${{ parameters.environment }}/${{ parameters.folder }}'
+                environmentServiceName: '${{ parameters.backendServiceArm }}'
+                providerAzureRmSubscriptionId: '${{ parameters.subscription }}'
+                allowTelemetryCollection: true           

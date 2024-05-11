@@ -1,0 +1,130 @@
+trigger:
+ branches:
+  include:
+    - develop
+ paths:
+  include:
+    - SampleApplicationforAKSDevops/*
+
+parameters:
+- name: AcrRegistryServiceConnection
+  default: 'docker-acr-registry'
+- name: Helm_ACR_Name
+  default: 'kubelabacr007.azurecr.io'
+- name: Azure_Resource_Manager_Service_Connection
+  default: 'azurespn'
+- name: Helm_Chart_Name_Frontend
+  default: 'frontend'
+- name: Helm_Chart_Name_Backend
+  default: 'backend'
+- name: Helm_Namespace
+  default: 'development'
+- name: AKS_ResourceGroup
+  default: 'kubernetes-lab'
+- name: AKS_ClusterName
+  default: 'aks-cluster-deb-001'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+
+## Build Docker image for Frontend application
+- stage: BuildFrontend
+  displayName: Build and push frontend Container
+  jobs:
+  - template: templates/docker_build_template.yaml
+    parameters:
+      buildname: 'Java_Docker_Build_Frontend'
+      imageRepository: 'apps/frontend'
+      dockerfilePath: '$(system.defaultWorkingDirectory)/applications/frontend/Dockerfile'
+      dockerRegistryServiceConnection: ${{ parameters.AcrRegistryServiceConnection }}
+
+## Build Docker image for backend application
+- stage: BuildBackend
+  dependsOn: [BuildFrontend]
+  condition: succeeded('BuildFrontend') 
+  displayName: Build and push Backend Container
+  jobs:
+  - template: templates/docker_build_template.yaml
+    parameters:
+      buildname: 'Java_Docker_Build_Backend'
+      imageRepository: 'apps/backend'
+      dockerfilePath: '$(system.defaultWorkingDirectory)/applications/backend/Dockerfile'
+      dockerRegistryServiceConnection: ${{ parameters.AcrRegistryServiceConnection }}
+
+# Stage to pull and run the frontend image in devops runner and run the Container scan using runner and publish the results
+- stage: ScanFrontEnd
+  dependsOn: [BuildBackend]
+  condition: succeeded('BuildFrontend')   
+  displayName: Scan Frontend Docker image
+  jobs:
+  - template: templates/docker_image_scan_template.yaml
+    parameters:
+      dockerRegistryServiceConnection: ${{ parameters.AcrRegistryServiceConnection }}
+      dockerImage: ${{ parameters.Helm_ACR_Name }}/apps/frontend:$(Build.BuildNumber)
+
+# Stage to pull and run the backend image in devops runner and run the Container scan using runner and publish the results
+- stage: ScanBackend
+  dependsOn: [ScanFrontEnd]
+  condition: succeeded('BuildBackend')   
+  displayName: Scan Backend Docker image
+  jobs:
+  - template: templates/docker_image_scan_template.yaml
+    parameters:
+      dockerRegistryServiceConnection: ${{ parameters.AcrRegistryServiceConnection }}
+      dockerImage: ${{ parameters.Helm_ACR_Name }}/apps/backend:$(Build.BuildNumber)
+
+## Use the Backend helm chart and push to the ACR
+- stage: Helm
+  dependsOn: [ScanBackend]
+  condition: succeeded('ScanBackend')   
+  displayName: Publish Backend Helm Charts to ACR
+  jobs:
+  - template: templates/helm_build_template.yaml
+    parameters:
+      Azure_Resource_Manager_Service_Connection: ${{ parameters.Azure_Resource_Manager_Service_Connection }}
+      Helm_Chart_Name: ${{ parameters.Helm_Chart_Name_Backend }}
+      Helm_ACR_Name: ${{ parameters.Helm_ACR_Name }}
+
+## Use the Frontend helm chart and push to the ACR
+- stage: Helm
+  dependsOn: [ScanBackend]
+  condition: succeeded('ScanBackend')   
+  displayName: Publish Frontend Helm Charts to ACR
+  jobs:
+  - template: templates/helm_build_template.yaml
+    parameters:
+      Azure_Resource_Manager_Service_Connection: ${{ parameters.Azure_Resource_Manager_Service_Connection }}
+      Helm_Chart_Name: ${{ parameters.Helm_Chart_Name_Frontend }}
+      Helm_ACR_Name: ${{ parameters.Helm_ACR_Name }}
+
+## Deploy the uppdated Backend helm chart in the AKS cluster
+- stage: Kubernetes
+  dependsOn: [Helm]
+  condition: succeeded('Helm')   
+  displayName: Upgrade or install helm chart on AKS
+  jobs:
+  - template: templates/kubernetes_deploy_template.yaml
+    parameters:
+      Azure_Resource_Manager_Service_Connection: ${{ parameters.Azure_Resource_Manager_Service_Connection }}
+      Helm_Chart_Name: ${{ parameters.Helm_Chart_Name_Backend }}
+      Helm_ACR_Name: ${{ parameters.Helm_ACR_Name }}
+      Helm_Namespace: ${{ parameters.Helm_Namespace }}
+      AKS_ResourceGroup: ${{ parameters.AKS_ResourceGroup }}
+      AKS_ClusterName: ${{ parameters.AKS_ClusterName }}
+
+## Deploy the uppdated Frontend helm chart in the AKS cluster
+- stage: Kubernetes
+  dependsOn: [Helm]
+  condition: succeeded('Helm')   
+  displayName: Upgrade or install helm chart on AKS
+  jobs:
+  - template: templates/kubernetes_deploy_template.yaml
+    parameters:
+      Azure_Resource_Manager_Service_Connection: ${{ parameters.Azure_Resource_Manager_Service_Connection }}
+      Helm_Chart_Name: ${{ parameters.Helm_Chart_Name_Frontend }}
+      Helm_ACR_Name: ${{ parameters.Helm_ACR_Name }}
+      Helm_Namespace: ${{ parameters.Helm_Namespace }}
+      AKS_ResourceGroup: ${{ parameters.AKS_ResourceGroup }}
+      AKS_ClusterName: ${{ parameters.AKS_ClusterName }}

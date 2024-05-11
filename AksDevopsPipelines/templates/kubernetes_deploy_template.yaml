@@ -1,0 +1,45 @@
+parameters:
+- name: Azure_Resource_Manager_Service_Connection
+  default: ''
+- name: Helm_Chart_name
+  default: ''
+- name: Helm_ACR_Name
+  default: ''
+- name: Helm_Namespace
+  default: ''
+- name: AKS_ResourceGroup
+  default: ''
+- name: AKS_ClusterName
+  default: ''
+
+
+jobs:  
+- job: Kubernetes
+  displayName: Kubernetes deploy
+  steps:
+
+  - task: AzureCLI@2
+    displayName: Azure CLI
+    inputs:
+      azureSubscription: ${{ parameters.Azure_Resource_Manager_Service_Connection }}
+      scriptType: pscore
+      scriptLocation: inlineScript
+      inlineScript: |
+        
+        $PASSWORD=$(az acr login --name ${{ parameters.Helm_ACR_Name }} --expose-token --output tsv --query accessToken)
+
+        Start-Sleep -Seconds 10
+        
+        $USER_NAME="helmtoken"
+        
+        $PASSWORD=$(az acr token create -n $USER_NAME -r ${{ parameters.Helm_ACR_Name }} --scope-map _repositories_admin --only-show-errors --query "credentials.passwords[0].value" -o tsv)
+        
+        Start-Sleep -Seconds 30
+
+        helm registry login ${{ parameters.Helm_ACR_Name }} --username $USER_NAME --password $PASSWORD
+        
+        az aks get-credentials --resource-group ${{ parameters.AKS_ResourceGroup }} --name ${{ parameters.AKS_ClusterName }} --overwrite-existing
+        
+        helm upgrade --namespace ${{ parameters.Helm_Namespace }} --install --wait ${{ parameters.Helm_Chart_name }}$(Build.BuildNumber) oci://kubelabacr007.azurecr.io/helm/${{ parameters.Helm_Chart_name }} --version $(Build.BuildNumber) --create-namespace
+        
+        echo 'Helm Release version '${{ parameters.Helm_Chart_name }}$(Build.BuildNumber)' has been installed in the kubernetes cluster'

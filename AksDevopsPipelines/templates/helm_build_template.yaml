@@ -1,0 +1,40 @@
+parameters:
+- name: Azure_Resource_Manager_Service_Connection
+  default: ''
+- name: Helm_Chart_name
+  default: ''
+- name: Helm_ACR_Name
+  default: ''
+
+
+jobs:  
+- job: Helm
+  displayName: Helm Package
+  steps:
+
+  - task: AzureCLI@2
+    displayName: Azure CLI
+    inputs:
+      azureSubscription: ${{ parameters.Azure_Resource_Manager_Service_Connection }}
+      scriptType: pscore
+      scriptLocation: inlineScript
+      inlineScript: |
+        helm version
+        
+        az --version
+        
+        az account show
+        
+        cd $(system.defaultWorkingDirectory)/SampleApplicationforAKSDevops/helm-charts/${{ parameters.Helm_Chart_name }}
+        
+        helm package . --version $(Build.BuildNumber)
+        
+        $PASSWORD=$(az acr login --name ${{ parameters.Helm_ACR_Name }} --expose-token --output tsv --query accessToken)
+        
+        $USER_NAME="helmtoken"
+        
+        $PASSWORD=$(az acr token create -n $USER_NAME -r ${{ parameters.Helm_ACR_Name }} --scope-map _repositories_admin --only-show-errors --query "credentials.passwords[0].value" -o tsv)
+        
+        helm registry login ${{ parameters.Helm_ACR_Name }} --username $USER_NAME --password $PASSWORD
+        
+        helm push ${{ parameters.Helm_Chart_name }}-$(Build.BuildNumber).tgz oci://${{ parameters.Helm_ACR_Name }}/helm
